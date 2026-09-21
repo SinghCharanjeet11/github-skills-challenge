@@ -93,3 +93,126 @@ These records show clear signs of abnormal service behaviour:
 - `memory_percent` rises to 70% and then 91%
 
 This is consistent with a service degradation event caused by high resource consumption and database connectivity issues, which is exactly the sort of problem that AIOps aims to detect and flag.
+
+## AIOps scenario summary
+
+This repository simulates a lightweight AIOps workflow for a payment-processing service. The service emits operational telemetry while it handles requests. The goal is to observe, classify, and alert on abnormal behaviour using a simple event-stream pipeline before the issue escalates to customers or upstream systems.
+
+## Description of the operational data
+
+The operational data in `data/service_data.json` contains a sequence of records. Each record includes:
+
+- `timestamp`: ISO 8601 timestamp for the observation time
+- `service`: the service name (`payment-service`)
+- `response_time_ms`: request latency in milliseconds
+- `cpu_percent`: CPU utilization percentage
+- `memory_percent`: memory utilization percentage
+- `log_level`: severity such as `INFO` or `ERROR`
+- `message`: log text describing the outcome of the request
+
+The data represents a short operational window in which the system behaves normally before a degradation event begins.
+
+## Observations from the logs and metrics
+
+Normal behaviour is characterized by:
+
+- response times between roughly 120 and 145 ms
+- CPU use around 42-50%
+- memory use around 51-57%
+- `INFO` log messages stating `Payment request processed successfully`
+
+Unusual behaviour is characterized by:
+
+- response times of 610 ms and 640 ms
+- CPU use of 75% and 94%
+- memory use of 70% and 91%
+- `ERROR` level messages including `Payment service timeout` and `Database connection timeout`
+
+This pattern indicates a short but serious degradation event caused by a resource-intensive failure and database timeout conditions.
+
+## Anomaly-detection findings
+
+Using the provided `AnomalyDetector` in `src/anomaly_detector.py`, the service is flagged as anomalous when metrics exceed their thresholds. The detector identifies:
+
+1. `2026-09-20T10:05:00` as anomalous because the response time exceeds the latency threshold.
+2. `2026-09-20T10:06:00` as anomalous because response time, CPU, and memory each exceed their thresholds.
+
+The detector produces a readable structured anomaly event that includes the timestamp, service name, type, and reasons. This exposes why the observation was flagged.
+
+
+## Final workflow execution result
+
+The final workflow execution was run with:
+
+```bash
+cd /workspaces/github-skills-challenge && python src/aiops_pipeline.py
+```
+
+The resulting output was:
+
+```text
+==================================================
+AIOps Pipeline Result
+==================================================
+Records processed: 10
+Anomalies detected: 2
+Events consumed: 2
+
+Detected Events:
+
+Service: payment-service
+Timestamp: 2026-09-20T10:05:00
+Type: ANOMALY
+Reasons: High response time
+
+Service: payment-service
+Timestamp: 2026-09-20T10:06:00
+Type: ANOMALY
+Reasons: High response time, High CPU utilization, High memory utilization
+```
+
+This confirms that the operational data was processed, the anomaly detection identified the failure window, the event reached the topic and was consumed, and the final downstream output described the detected operational issue.
+
+## Issues identified and corrected
+
+Two issues were found and corrected while preserving the original architecture:
+
+1. Topic mismatch in the pipeline
+   - Affected component: `src/aiops_pipeline.py`
+   - Cause: the producer was publishing to `service-events` while the consumer was configured to read from `anomaly-events`.
+   - Correction: both sides were connected to the same in-memory topic.
+   - Result: anomaly events were successfully consumed.
+
+2. Import compatibility issue
+   - Affected components: `src/aiops_pipeline.py`, `src/event_producer.py`, and `src/event_consumer.py`
+   - Cause: module imports were incompatible with package-style execution and direct script execution.
+   - Correction: fallback imports were added so the workflow works in both contexts.
+   - Result: the pipeline runs successfully without replacing the existing implementation.
+
+## Limitation and possible improvement
+
+A limitation of the current approach is that the detector is rule-based and uses fixed thresholds. This works well for obvious spikes, but it may miss gradual degradation or unusual incidents that do not exceed the thresholds immediately. A possible improvement would be to add historical baselines or adaptive thresholds so the system can detect both sharp anomalies and slow-moving performance drift.
+
+## Reproduction steps
+
+To reproduce the demonstration on a fresh clone or working copy:
+
+1. Open a terminal in the project root.
+2. Run the workflow:
+
+```bash
+cd /workspaces/github-skills-challenge && python src/aiops_pipeline.py
+```
+
+3. Review the output for the number of records processed, the detected anomalies, and the final reasons logged for each anomaly.
+4. Optionally run the test suite:
+
+```bash
+cd /workspaces/github-skills-challenge && python -m pytest -q
+```
+
+Expected result: the workflow completes successfully and the repository tests pass.
+
+## Final note
+
+This repository demonstrates a minimal but realistic AIOps pattern: collect operational telemetry, detect abnormal conditions, convert them into event records, and surface the issue in a readable downstream output. The corrected workflow is working within the original assessment architecture and does not replace the provided components with a different implementation.
